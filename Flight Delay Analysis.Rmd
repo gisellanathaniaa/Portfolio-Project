@@ -1,0 +1,488 @@
+---
+title: "coursework"
+author: "Gisella"
+date: "11/11/2021"
+output: html_document
+---
+
+#ST2195 Coursework
+#Student Name : Gisella Nathania Lukman
+#UOL Student ID : 200618098
+
+```{r}
+#importing and loading all the packages we use for question 1-5
+library(dplyr)
+library(ggplot2)
+library(tidyverse)
+library(scales)
+library(grid)
+library(glue)
+library(rlang)
+library(sf)
+library(skimr)
+library(mlr3)
+library(mlr3learners)
+library(glmnet)
+library(ranger)
+library(mlr3viz)
+```
+
+```{r}
+#reading the csv files
+plane <- read.csv(file = 'plane-data.csv')
+carriers <- read.csv(file = 'carriers.csv')
+airports <- read.csv(file = 'airports.csv')
+df_1995 <- read.csv(file = '1995.csv')
+df_1996 <- read.csv(file = '1996.csv')
+```
+
+```{r}
+#row binding the flights in 1995-1996
+table <- rbind(df_1995, df_1996)
+```
+
+
+```{r}
+#clean table (drop NAs and remove unneccesary columns)
+table_cleaned <- subset(table, select = -c(CarrierDelay, WeatherDelay, NASDelay, CancellationCode, LateAircraftDelay, SecurityDelay))
+table_na_cleaned <- na.omit(table_cleaned)
+table_na_cleaned
+```
+
+```{r}
+#filter so only contain the value that flight does not get cancelled or diverted
+flight <- table_na_cleaned %>%
+  filter(Cancelled==0, Diverted==0)
+flight
+```
+
+
+```{r}
+#Question 1. When is the best time of day, day of the week, and time of year to fly to minimise delays?
+#Best time of the day
+#Find the least average delay by DepTime to minimize delay
+best_time <- flight %>%
+  filter(ArrDelay > 0) %>%
+  group_by(DepTime) %>%
+  summarise(delay_counts =n(),
+            average_delay = mean(ArrDelay)) %>%
+  arrange(average_delay)
+best_time
+```
+
+```{r}
+#Best time of the day visualization using a line chart
+best_time %>%
+  ggplot() +
+  aes( x = DepTime,y = average_delay,fill= DepTime) +
+  labs(title="Best Time of The Day") +
+  geom_col() +
+  coord_flip() +
+  theme_minimal()
+best_time
+```
+
+```{r}
+#Best day of the week
+#Find the least average delay by DayOfWeek to minimize delay
+best_day_of_week <- flight %>%
+  filter(ArrDelay > 0) %>%
+  group_by(DayOfWeek) %>%
+  summarize(average_delay = mean(ArrDelay),
+            delay_count = n()) %>%
+  arrange(average_delay)
+New_DayOfWeek <- factor(c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"))
+levels(New_DayOfWeek) <- c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday", ordered = TRUE)
+best_day_of_week
+```
+
+```{r}
+#Best day of the week visualization using a bar chart
+best_day_of_week %>%
+  ggplot() +
+  aes( 
+    x = New_DayOfWeek,
+    y = average_delay,
+    fill = New_DayOfWeek,
+    best_day_of_week_desc$New_DayOfWeek) + 
+  labs(title = "Best Day Of the Week") +
+  theme_classic() +
+  geom_col() +
+  scale_fill_brewer(palette="RdPu") +
+  coord_flip() 
+best_day_of_week
+```
+
+
+```{r}
+#Best time of the year
+#Find the least average delay by Month to minimize delay
+time_of_year <- flight %>%
+  filter(ArrDelay > 0) %>%
+  group_by(Month) %>%
+  summarize(delay_counts = n(),
+            average_delay = mean(ArrDelay)) %>%
+  arrange(average_delay)
+time_of_year
+```
+
+```{r}
+#Best time of the year visualization using a bar chart
+time_of_year %>%
+  ggplot() +
+  aes(
+    x = factor(Month),
+    y = average_delay,
+    fill = factor(Month)) +
+  labs(title = "Best Time of The Year") +
+  xlab("month") +
+  theme_classic() +
+  geom_col() +
+  coord_flip() +
+  scale_fill_manual(values=c("deeppink3","violetred","palevioletred","palevioletred2","hotpink","lightpink","lavenderblush","thistle1","plum1","plum2","orchid","orchid3"))
+time_of_year
+```
+
+
+```{r}
+#Question 2, Do older planes suffer more delays?
+#Rename tailnum column in plane data into TailNum
+plane <- rename(plane, TailNum = tailnum)
+#Filtering the plane data denotes as plane_filtered
+plane_filtered <- plane %>%
+  filter(year!="None" & year!="" & year!="0000")
+plane_filtered
+```
+
+```{r}
+#Merge flight and plane_filtered by inner join on TailNum
+older_plane <- inner_join(flight, plane_filtered, by="TailNum") 
+older_plane
+```
+
+```{r}
+#Find the average delay on each year before 1996
+q2 <- older_plane %>%
+  filter(year<1996) %>%
+  group_by(year) %>%
+  summarise(average_delay = mean(ArrDelay)) %>%
+  arrange(desc(year, average_delay))
+q2
+```
+
+```{r}
+#Convert year column data types into numeric
+q2$year <- as.numeric(as.character(q2$year))
+```
+
+```{r}
+#Visualize using scatter plot and a trend line
+ggplot(q2, aes(x= year, y=average_delay, color="#FAAFBE"))+
+  geom_point()+
+  geom_smooth(method=lm)+
+  theme_light() +
+  labs(title = 'Correlation between year and average delay')
+```
+
+
+```{r}
+#question 3 = How does the number of people flying in different locations change over time?
+# 1. Origin
+#Merge flights and airports data using left join on Origin=iata
+joined_origin <- left_join(flight, airports, by=c("Origin"= "iata"))
+joined_origin
+```
+
+```{r}
+#Find the total flights in 1995 in each state, denotes as result_95
+result_1995 <- joined_origin %>%
+  filter(Year==1995) %>%
+  group_by(state) %>%
+  summarise(number_of_flight_1995=n())%>%
+  arrange(number_of_flight_1995)
+#Removing all NAs in the table
+result_95 <- na.omit(result_1995)
+result_95
+```
+
+```{r}
+#Find the total flights in 1996 in each state, denotes as result_96
+result_1996 <- joined_origin %>%
+  filter(Year==1996) %>%
+  group_by(state) %>%
+  summarise(number_of_flight_1996=n())%>%
+  arrange(number_of_flight_1996)
+#Removing all NAs in the table
+result_96 <- na.omit(result_1996)
+result_96
+```
+
+```{r}
+#Merge the result_95 and result_96
+joined_result <- full_join(result_95, result_96, all.x=TRUE, all.y=TRUE)
+joined_result
+```
+
+```{r}
+#A new table called mutate_joined_result, consists of joined_result table with a new column of differences
+mutate_joined_result <- joined_result %>%
+  mutate(difference = number_of_flight_1996 - number_of_flight_1995)
+mutate_joined_result
+```
+
+```{r}
+#selecting only the state and differences columns in a new table called number3
+number3 <-mutate_joined_result %>%
+  select(state, difference) %>%
+  arrange(desc(difference))
+number3
+```
+
+```{r}
+#Pick the top 6 differences by state, denotes as result_top
+result_top <- head(number3, n=6)
+result_top
+```
+
+```{r}
+#Pick the bottom 6 differences by state, denotes as result_bottom
+result_bottom <- tail(number3, n=6)
+result_bottom
+```
+
+```{r}
+#Merge the result_top and result_bottom in an ascending order
+result <- merge(result_top, result_bottom, all.x=TRUE, all.y=TRUE) 
+result_arrange <- result %>%
+  arrange(difference)
+result_arrange
+```
+
+```{r}
+#Visualize using a bar chart and a line chart
+result_arrange %>%
+  ggplot() +
+  aes( x = fct_inorder(state), 
+       y = difference,
+       fill = fct_inorder(state), group=1) +
+  labs(title = "Number of People Flying In Top And Bottom 6 States From Origin") +
+  xlab("state") +
+  theme_classic() +
+  geom_col() +
+  geom_line(stat = "identity") +
+  scale_fill_manual(values=c("deeppink3","violetred","palevioletred","palevioletred2","hotpink","lightpink","lavenderblush","thistle1","plum1","plum2","orchid","orchid3"))
+result_arrange
+```
+
+```{r}
+# 2. Dest
+#Merge flights and airports using left join on Dest=iata
+joined_dest <- left_join(flight, airports, by=c("Dest"= "iata"))
+joined_dest
+```
+
+```{r}
+#Find the average delay in 1995 in each state, denotes as dest_95
+dest_1995 <- joined_dest %>%
+  filter(Year==1995) %>%
+  group_by(state) %>%
+  summarise(number_of_flight_1995=n())%>%
+  arrange(number_of_flight_1995)
+dest_95 <- na.omit(dest_1995)
+dest_95
+```
+
+```{r}
+#Find the average delay in 1996 in each state, denotes as dest_96
+dest_1996 <- joined_dest %>%
+  filter(Year==1996) %>%
+  group_by(state) %>%
+  summarise(number_of_flight_1996=n())%>%
+  arrange(number_of_flight_1996)
+dest_96 <- na.omit(dest_1996)
+dest_96
+```
+
+```{r}
+#Merge dest_95 and dest_96, denotes as joined_result_2
+joined_result_2 <- full_join(dest_95, dest_96, all.x=TRUE, all.y=TRUE)
+joined_result_2
+```
+
+```{r}
+#A new table called mutate_joined_result_2, consists of joined_result_2 table with a new column of differences
+mutate_joined_result_2 <- joined_result_2 %>%
+  mutate(difference = number_of_flight_1996 - number_of_flight_1995)
+mutate_joined_result_2
+```
+
+```{r}
+#Selecting only the state and differences columns, denotes as number3_2
+number3_2 <-mutate_joined_result_2 %>%
+  select(state, difference) %>%
+  arrange(desc(difference))
+number3_2
+```
+
+```{r}
+#Pick the top 6 differences by state, denotes as result2_top
+result2_top <- head(number3_2, n=6)
+result2_top
+```
+
+```{r}
+#Pick the bottom 6 differences by state, denotes as result2_bottom
+result2_bottom <- tail(number3_2, n=6)
+result2_bottom
+```
+
+```{r}
+#Merge result2_top and result2_bottom in an ascending order, denotes as result2_arrange
+result2 <- merge(result2_top, result2_bottom, all.x=TRUE, all.y=TRUE)
+result2_arrange <- result2 %>%
+  arrange(difference)
+result2_arrange
+```
+
+```{r}
+#Visualize using a bar chart and a line chart
+result2_arrange %>%
+  ggplot() +
+  aes( 
+    x = fct_inorder(state), 
+    y = difference,
+    fill = fct_inorder(state), group=1) +
+  labs(title = "Number of People Flying in Top and Bottom 6 States From Dest") +
+  xlab("state") +
+  theme_classic() +
+  geom_col() +
+  geom_line(stat = "identity") +
+  scale_fill_manual(values=c("deeppink3","violetred","palevioletred","palevioletred2","hotpink","lightpink","lavenderblush","thistle1","plum1","plum2","orchid","orchid3"))
+result2_arrange
+```
+
+
+
+```{r}
+#Question 4, Can you detect cascading failures as delays in one airport create delays in others?
+#Find TailNum based on its count using joined_origin table from question 3 above
+no4 <- joined_origin %>%
+  group_by(TailNum) %>%
+  summarise(tailnum_count=n()) %>%
+  arrange(tailnum_count)
+no4
+```
+
+```{r}
+#Pick a random TailNum (N640) and filter the data to only consists of flight on Friday on the 20th with Arrdelay>60 minutes
+qn4 <- joined_origin %>%
+  filter(TailNum == 'N640', DayOfWeek=='Friday', DayofMonth=='20', ArrDelay>60) %>%
+  arrange(DepTime)
+qn4
+```
+
+```{r}
+#Cleaning the table by removing unnecessary columns
+qn4_cleaned <- subset(qn4, select = -c(UniqueCarrier, Distance, TaxiIn,TaxiOut,Cancelled, Diverted))
+qn4_cleaned
+```
+
+```{r}
+#Visualize using a line chart
+ggplot() +
+  geom_line(data = qn4_cleaned, aes(x = airport, y = ArrTime, color = "ArrTime", group=1)) +
+  geom_line(data = qn4_cleaned, aes(x = airport, y = CRSArrTime, color = "CRSArrTime", group=1)) +
+  labs(title="Arrival Time and Scheduled Arrival Time Each Airport") +
+  labs(y= "Time", x = "Airport") 
+```
+
+```{r}
+#Question 5, Use the available variables to construct a model that predicts delays
+#Checking whether the flight data still has missing values
+skimr::skim(flight)
+```
+
+```{r}
+#Set the numerical value using the 9 most significant columns in the flight data, denotes as selected_flight
+selected_flight <- flight %>%
+  select(Year,Month,DayofMonth,DepTime,CRSDepTime,ArrTime,CRSArrTime,ArrDelay, DepDelay)
+selected_flight
+```
+
+```{r}
+#As the flight data contains too many datas, we set a sample of 100,000 from it
+set.seed(1)
+sample_flight <- sample_n(selected_flight,100000)
+sample_flight
+```
+
+```{r}
+#Setting the task with ArrDelay as the target value
+task <- TaskRegr$new(id='sample_flight', backend=sample_flight, target = 'ArrDelay') 
+measure <- msr('regr.mse')
+```
+
+```{r}
+#Splitting the data into train and test set with a ratio of 7:3
+set.seed(1)
+train_set <- sample(task$nrow, 0.7 * task$nrow) 
+test_set <- setdiff(seq_len(task$nrow), train_set) 
+```
+
+```{r}
+#Find the MSE of Linear Regression
+learner_lm <- lrn('regr.lm')
+learner_lm$train(task, row_ids = train_set) 
+learner_lm$predict(task, row_ids = test_set)$score() 
+```
+
+```{r}
+#Find the MSE of Ridge Regression
+learner_ridge <- lrn('regr.glmnet') 
+learner_ridge$param_set$values <- list(alpha = 0, lambda=0.03) 
+
+learner_ridge$train(task, row_ids = train_set) 
+learner_ridge$predict(task, row_ids = test_set)$score()
+```
+
+```{r}
+#Find the MSE of Lasso Regression
+learner_lassoreg <- lrn('regr.glmnet') 
+learner_lassoreg$param_set$values <- list(alpha = 1,lambda=0.03)
+
+learner_lassoreg$train(task, row_ids = train_set) 
+learner_lassoreg$predict(task, row_ids = test_set)$score()
+```
+
+```{r}
+#Find the MSE of Random Forest
+learner_rf <- lrn('regr.ranger') 
+learner_rf$param_set$values <- list(min.node.size = 1)
+
+learner_rf$train(task, row_ids = train_set)
+learner_rf$predict(task, row_ids = test_set)$score()
+```
+
+```{r}
+#Benchmark
+set.seed(1) 
+
+#List of learners
+lrn_list <- list(
+  learner_lm,
+  learner_ridge,
+  learner_lassoreg,
+  learner_rf
+)
+
+#Benchmark setting
+bm_design <- benchmark_grid(task=task, resamplings=rsmp('cv', folds=3), 
+                            learners=lrn_list)
+bmr <- benchmark(bm_design, store_models=TRUE)
+
+#Visualise with boxplots
+autoplot(bmr) + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+#Comparison of each MSE for all 4 models
+bmr$aggregate(measure)
+```
